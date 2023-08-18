@@ -1,5 +1,5 @@
 #!/bin/sh
-PACKAGES="lvm2 gdisk e2fsprogs kmod udev"
+PACKAGES="lvm2 gdisk e2fsprogs dosfstools kmod udev"
 eval "$chrooted_functions"
 probe_target_optional_functions
 start_failsafe_mode
@@ -24,19 +24,18 @@ do
     shift
 done
 
-failsafe mount -t proc none /proc
-failsafe_mount_sys_and_dev
+failsafe mount -t proc none /proc >/dev/null
+failsafe_mount_sys_and_dev >/dev/null
 export DEBIAN_FRONTEND=noninteractive LANG=C
 
 optional_target_prepare_rootfs draft inside
 
 # We will need internet connectivity for package management.
 # Ensure we have a valid DNS setup.
-if [ "$(resolv_conf_is_invalid)" -eq 1 ]
+resolv_conf_orig_status=$(ensure_valid_resolv_conf)
+if [ "$resolv_conf_orig_status" != "ok" ]
 then
-    echo -n "I: draft image - generating /etc/resolv.conf (it was missing or incomplete)... "
-    generate_resolv_conf_file
-    echo done
+    echo "I: draft image - generated /etc/resolv.conf (it was missing or incomplete)"
 fi
 
 if $target_custom_packages_exists
@@ -199,6 +198,8 @@ then
     echo "LC_ALL=C" > /etc/default/locale
     echo done
 fi
+
+possibly_restore_resolv_conf
 
 optional_target_cleanup_rootfs draft inside
 # umount all

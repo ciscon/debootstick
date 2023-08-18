@@ -4,13 +4,6 @@ PROGRESS_BAR_SIZE=40
 NICE_FACTOR_SCALE=100
 VG="DBSTCK_$STICK_OS_ID"
 
-dd_min_verbose()
-{
-    # status=none did not exist on old versions
-    dd status=none "$@" 2>/dev/null || \
-    dd status=noxfer "$@"
-}
-
 show_progress_bar()
 {
     achieved=$1
@@ -28,11 +21,13 @@ show_progress_bar()
 
 disk_partitions()
 {
-    lsblk -lno NAME,TYPE | grep -w disk | while read disk_name type
+    lsblk -lno NAME,TYPE | while read disk_name type
     do
+        test "$type" = disk || continue
         disk="/dev/$disk_name"
-        lsblk -lno NAME,TYPE $disk | grep -w part | while read part_name type
+        lsblk -lno NAME,TYPE "$disk" | while read part_name type
         do
+            test "$type" = part || continue
             part="/dev/$part_name"
             echo $disk $part
         done
@@ -87,14 +82,13 @@ get_booted_device_from_vg()
 get_higher_capacity_devices()
 {
     threshold=$1
-    cat /proc/partitions | while read major minor size name
+    lsblk -lno PATH,TYPE | while read device type
     do
-        if [ "$major" = "8" ] || [ "$major" = "259" ]
+        test "$type" = disk || continue
+        device_size=$(get_device_capacity "$device")
+        if [ $device_size -gt $threshold ]
         then
-            if [ "$((minor % 16))" -eq 0 -a $((size*1024)) -gt $threshold ]
-            then
-                echo /dev/$name
-            fi
+            echo $device
         fi
     done
 }
@@ -130,8 +124,13 @@ get_device_label()
 {
     size=$(get_device_capacity $1)
     shortname=$(echo $1 | sed -e 's/\/dev\///')
-    echo $(cat /sys/class/block/$shortname/device/model) \
-         $(human_readable_disk_size $size)
+    if [ -f "/sys/class/block/$shortname/device/model" ]
+    then
+        model=$(cat /sys/class/block/$shortname/device/model)
+    else
+        model="DISK"
+    fi
+    echo $model $(human_readable_disk_size $size)
 }
 
 select_menu()
@@ -247,21 +246,13 @@ ask_and_set_pass()
     echo "root:$password" | chpasswd
 }
 
-restore_lvm_conf()
-{
-    if [ -f /etc/lvm/lvm.conf.saved ]
-    then
-        mv /etc/lvm/lvm.conf.saved /etc/lvm/lvm.conf
-    fi
-}
-
 dump_partition_info()
 {
     disk_device="$1"
-    echo "$PARTITIONS" | tr ';' ' ' | while read part_id subtype mountpoint size
+    echo "$PARTITIONS" | while IFS=";" read part_id subtype mountpoint size
     do
         device="$(get_part_device $disk_device $part_id)"
-        echo "part $device $subtype $mountpoint $size"
+        echo "part;$device;$subtype;$mountpoint;$size"
     done
 }
 
@@ -269,9 +260,9 @@ dump_lvm_info()
 {
     if [ "$LVM_VOLUMES" != "" ]
     then
-        echo "$LVM_VOLUMES" | tr ';' ' ' | while read label subtype mountpoint size
+        echo "$LVM_VOLUMES" | while IFS=";" read label subtype mountpoint size
         do
-            echo "lvm /dev/$VG/$label $subtype $mountpoint $size"
+            echo "lvm;/dev/$VG/$label;$subtype;$mountpoint;$size"
         done
     fi
 }
@@ -284,7 +275,7 @@ dump_volumes_info()
 
 lvm_partition_size_mb()
 {
-    dump_partition_info "$1" | while read vol_type device subtype mountpoint size
+    dump_partition_info "$1" | while IFS=";" read vol_type device subtype mountpoint size
     do
         if [ "$subtype" = "lvm" ]
         then
@@ -296,7 +287,7 @@ lvm_partition_size_mb()
 
 lvm_sum_size_mb()
 {
-    dump_lvm_info | while read vol_type device subtype mountpoint size
+    dump_lvm_info | while IFS=";" read vol_type device subtype mountpoint size
     do
         device_size_mb "$device"
     done | sum_lines
@@ -321,7 +312,7 @@ analysis_step1() {
     nice_factor="$1"
     disk_size_mb="$2"
 
-    while read voltype device subtype mountpoint size
+    while IFS=";" read voltype device subtype mountpoint size
     do
         current_size_mb=$(device_size_mb $device)
         case "$size" in
@@ -331,9 +322,9 @@ analysis_step1() {
                 size_mb=$((percent_requested*nice_factor*disk_size_mb/NICE_FACTOR_SCALE/100))
                 if [ $current_size_mb -ge $size_mb ]
                 then    # percentage too low regarding current size, convert to 'auto'
-                    echo $voltype auto $device $subtype $mountpoint $current_size_mb
+                    echo "$voltype;auto;$device;$subtype;$mountpoint;$current_size_mb"
                 else    # convert to fixed size, to ease later processing
-                    echo $voltype fixed $device $subtype $mountpoint $size_mb
+                    echo "$voltype;fixed;$device;$subtype;$mountpoint;$size_mb"
                 fi
                 ;;
             *[MG])
@@ -342,16 +333,16 @@ analysis_step1() {
                 size_mb=$((size_requested_mb*nice_factor/NICE_FACTOR_SCALE))
                 if [ $size_mb -le $current_size_mb ]
                 then    # fixed size too low regarding current size (because of nice factor), convert to 'auto'
-                    echo $voltype auto $device $subtype $mountpoint $current_size_mb
+                    echo "$voltype;auto;$device;$subtype;$mountpoint;$current_size_mb"
                 else
-                    echo $voltype fixed $device $subtype $mountpoint $size_mb
+                    echo "$voltype;fixed;$device;$subtype;$mountpoint;$size_mb"
                 fi
                 ;;
             max)
-                echo $voltype max $device $subtype $mountpoint $current_size_mb
+                echo "$voltype;max;$device;$subtype;$mountpoint;$current_size_mb"
                 ;;
             auto)
-                echo $voltype auto $device $subtype $mountpoint $current_size_mb
+                echo "$voltype;auto;$device;$subtype;$mountpoint;$current_size_mb"
                 ;;
             *)
                 echo "unknown size! '$size'" >&2
@@ -359,6 +350,11 @@ analysis_step1() {
                 ;;
         esac
     done
+}
+
+last_field()
+{
+    awk 'BEGIN {FS = ";"}; {print $NF}'
 }
 
 compute_applied_sizes()
@@ -375,9 +371,9 @@ compute_applied_sizes()
     do
         volume_analysis_step1="$(echo "$volumes_info" | analysis_step1 $nice_factor $disk_size_mb)"
 
-        static_size_mb=$(echo "$volume_analysis_step1" | grep -v " fixed " | awk '{print $NF}' | sum_lines)
+        static_size_mb=$(echo "$volume_analysis_step1" | grep -v ";fixed;" | last_field | sum_lines)
         space_size_mb=$((total_size_mb-static_size_mb))
-        sum_fixed_mb=$(echo "$volume_analysis_step1" | grep " fixed " | awk '{print $NF}' | sum_lines)
+        sum_fixed_mb=$(echo "$volume_analysis_step1" | grep ";fixed;" | last_field | sum_lines)
 
         if [ $sum_fixed_mb -gt $space_size_mb ]
         then
@@ -405,27 +401,78 @@ compute_applied_sizes()
         fi
     done
 
-    echo "$volume_analysis_step1" | while read voltype sizetype args
+    echo "$volume_analysis_step1" | \
+            while IFS=";" read voltype sizetype device subtype mountpoint current_size_mb
     do
-        set -- $args
         case $sizetype in
             "fixed")
-                echo $voltype $1 $2 $3 $4
+                echo "$voltype;$device;$subtype;$mountpoint;$current_size_mb"
                 ;;
             "auto")
-                echo $voltype $1 $2 $3 keep
+                echo "$voltype;$device;$subtype;$mountpoint;keep"
                 ;;
             "max")
-                echo $voltype $1 $2 $3 max
+                echo "$voltype;$device;$subtype;$mountpoint;max"
                 ;;
         esac
     done
+}
+
+get_sector_size()
+{
+    blockdev --getss "$1"
+}
+
+get_part_table_type()
+{
+    do_quiet_err_only sfdisk --dump "$1" | grep "^label:" | awk '{print $2}'
+}
+
+# this function is a little more complex than expected
+# because it has to deal with possibly different sector sizes.
+copy_partition_table()
+{
+    source_disk="$1"
+    target_disk="$2"
+
+    source_disk_ss=$(get_sector_size $source_disk)
+    target_disk_ss=$(get_sector_size $target_disk)
+
+    multiplier=1
+    divider=1
+    if [ $source_disk_ss -gt $target_disk_ss ]
+    then
+        multiplier=$((source_disk_ss / target_disk_ss))
+    elif [ $target_disk_ss -gt $source_disk_ss ]
+    then
+        divider=$((target_disk_ss / source_disk_ss))
+    fi
+
+    {
+        echo "label: $(get_part_table_type $source_disk)"
+        echo
+        partx -o NR,START,SECTORS,TYPE -P $source_disk | while read line
+        do
+            eval $line
+            START=$((START*multiplier/divider))
+            SECTORS=$((SECTORS*multiplier/divider))
+            echo " $NR : start=$START, type=$TYPE, size=$SECTORS"
+        done
+    } | sfdisk --no-reread $target_disk >/dev/null
+    partx -u ${target_disk}  # notify the kernel
 }
 
 resize_last_partition()
 {
     disk="$1"
     applied_size_mb="$2"
+    disk_sector_size=$(get_sector_size $disk)
+    partx_sector_size=512   # partx unit is always 512-bytes sectors
+
+    # note: we need to pass partition offsets and size to sfdisk
+    # using the disk sector size as unit.
+    # conversions should be carefully written to avoid integer overflows
+    # (partition offset and size may be large if converted to bytes...)
 
     if [ "$(blkid -o value -s PTTYPE $disk)" = "gpt" ]
     then
@@ -435,15 +482,16 @@ resize_last_partition()
     fi
 
     eval $(partx -o NR,START,TYPE -P $disk | tail -n 1)
+    # convert partition start offset unit from 'partx sector size' to 'disk sector size'
+    START=$((START/(disk_sector_size/partx_sector_size)))
 
     if [ "$applied_size_mb" = "max" ]
     then
         # do not specify the size => it will extend to the end of the disk
         part_def=" $NR : start=$START, type=$TYPE"
     else
-        # sector size is 512 bytes
-        sector_size=$((applied_size_mb*2*1024))
-        part_def=" $NR : start=$START, type=$TYPE, size=$sector_size"
+        part_size_in_sectors=$((applied_size_mb*(1024*1024/disk_sector_size)))
+        part_def=" $NR : start=$START, type=$TYPE, size=$part_size_in_sectors"
     fi
 
     # we delete, then re-create the partition with same information
@@ -499,14 +547,13 @@ device_name()
     fi
 }
 
-# resize2fs prints its version information on stderr, even if it succeeds.
-# make it silent unless it fails.
-quiet_resize2fs()
+# some commands print informational messages or minor warnings on stderr,
+# silence them together with stdout unless the command really fails.
+do_quiet()
 {
-    device="$1"
     return_code=0
     output="$(
-        resize2fs "$device" 2>&1
+        "$@" 2>&1
     )" || return_code=$?
     if [ $return_code -ne 0 ]
     then
@@ -515,21 +562,30 @@ quiet_resize2fs()
     fi
 }
 
+# same thing, but just filter out stderr, keep stdout
+# (if the command fails, restore stderr output).
+do_quiet_err_only()
+{
+    {
+        return_code=0
+        output="$(
+            "$@" 3>&1 1>&2 2>&3 # swap stdout <-> stderr
+        )" || return_code=$?
+        if [ $return_code -ne 0 ]
+        then
+            echo "$output" >&1
+            return $return_code
+        fi
+    } 3>&1 1>&2 2>&3 # restore stdout <-> stderr
+}
+
 # fatresize prints a warning when it has to convert FAT16 to FAT32
 # to handle a larger size. Hide it unless the command really fails.
 quiet_fatresize()
 {
     device="$1"
-    return_code=0
     dev_size=$(blockdev --getsize64 "$device")
-    output="$(
-        fatresize -s $dev_size "$device" 2>&1
-    )" || return_code=$?
-    if [ $return_code -ne 0 ]
-    then
-        echo "$output" >&2
-        return $return_code
-    fi
+    do_quiet fatresize -s $dev_size "$device"
 }
 
 get_origin_voldevice()
@@ -550,12 +606,86 @@ unmount_tree()
 {
     for mp in $(findmnt --list --submounts --mountpoint "$1" -o TARGET --noheadings | tac)
     do
-        echo "MSG temporarily un-mounting $mp..."
         umount $mp || umount -lf $mp || {
-            echo "MSG this failed, but everything should be fine on next reboot."
+            echo "MSG unmounting failed, but everything should be fine on next reboot."
             break
         }
     done
+}
+
+make_filesystem() {
+    voldevice="$1"
+    subtype="$2"
+    label="$3"
+    uuid="$4"
+
+    options=""
+    case "$subtype" in
+        efi|fat)
+            fstype="vfat"
+            if [ ! -z "$label" ]
+            then
+                options="-n $label"
+            fi
+            if [ ! -z "$uuid" ]
+            then
+                uuid=$(echo "$uuid" | tr -d "-")
+                options="$options -i $uuid"
+            fi
+            ;;
+        ext4)
+            fstype="ext4"
+            if [ ! -z "$label" ]
+            then
+                options="-L $label"
+            fi
+            if [ ! -z "$uuid" ]
+            then
+                options="$options -U $uuid"
+            fi
+            ;;
+    esac
+
+    mkfs -t $fstype $options "$voldevice"
+}
+
+copy_files() {
+    src_dir="$1"
+    dst_dir="$2"
+    cp -a "$src_dir/." "$dst_dir"
+}
+
+copy_partition() {
+    origin_voldevice="$1"
+    voldevice="$2"
+    subtype="$3"
+    mountpoint="$4"
+    temp_dir="$5"
+
+    # retrieve uuid & label
+    uuid="$(blkid -o value -s UUID "$origin_voldevice")"
+    label="$(blkid -o value -s LABEL "$origin_voldevice")"
+
+    # make filesystem on target
+    make_filesystem $voldevice "$subtype" "$label" "$uuid"
+
+    # (re)mount origin and target on fixed temp mountpoints
+    old_mountpoint="$temp_dir/old"
+    new_mountpoint="$temp_dir/new"
+    mkdir -p "$old_mountpoint" "$new_mountpoint"
+    if [ "$mountpoint" != "none" ]
+    then
+        unmount_tree "$mountpoint"
+    fi
+    mount "$origin_voldevice" "$old_mountpoint"
+    mount "$voldevice" "$new_mountpoint"
+
+    # copy partition files
+    copy_files "$old_mountpoint" "$new_mountpoint"
+
+    # umount temp mountpoints
+    umount "$old_mountpoint"
+    umount "$new_mountpoint"
 }
 
 get_steps() {
@@ -573,16 +703,24 @@ get_steps() {
         migrate-keep-part-lvm)
             echo "init_lvm_pv migrate_lvm"
             ;;
+        migrate-keep-part-bios)
+            # bootloader installation will initialize the target partition
+            echo "wipe_orig_part"
+            ;;
         migrate-keep-part-*)
-            echo "unmount copy_partition wipe_orig_part fsck"
+            echo "copy_partition wipe_orig_part"
             ;;
         migrate-*-part-lvm)
             # we know it is the last partition
             echo "resize_last_partition init_lvm_pv migrate_lvm"
             ;;
+        migrate-*-part-bios)    # this should be unusual!!
+            # we know it is the last partition
+            echo "resize_last_partition wipe_orig_part"
+            ;;
         migrate-*-part-*)
             # we know it is the last partition
-            echo "unmount copy_partition resize_last_partition resize_content wipe_orig_part fsck"
+            echo "resize_last_partition copy_partition wipe_orig_part"
             ;;
         migrate-keep-lvm-*)
             # nothing to do
@@ -603,9 +741,12 @@ process_volumes() {
 
     if [ "$LVM_VOLUMES" != "" ]
     then
-        orig_lvm_part_size_mb="$(lvm_partition_size_mb "$origin_device")"
+        # note: target_device variable is always available (when called from
+        # 'occupy-space.sh' and from 'migrate-to-disk.sh'); and in the later
+        # case, partition table has already been copied from origin_device.
+        orig_lvm_part_size_mb="$(lvm_partition_size_mb "$target_device")"
         orig_lvm_sum_size_mb="$(lvm_sum_size_mb)"
-        lvm_overhead_mb="$((lvm_partition_size_mb - lvm_sum_size_mb))"  # should be 4mb
+        lvm_overhead_mb="$((orig_lvm_part_size_mb - orig_lvm_sum_size_mb))"  # should be 4mb
     fi
 
     echo MSG gathering partition resize data...
@@ -645,10 +786,11 @@ process_part_of_volumes() {
     target_device="$2"
     operation="$3"
     format_info="$4"
+    temp_dir="$(mktemp -d)"
 
     # we process lines with "applied_size=max" last (sort key)
-    echo "$format_info" | sort -k 5,5 | \
-    while read voltype voldevice subtype mountpoint applied_size
+    echo "$format_info" | sort -t ";" -k 5,5 | \
+    while IFS=";" read voltype voldevice subtype mountpoint applied_size
     do
         dev_name=$(device_name $voltype $voldevice)
         origin_voldevice=$(get_origin_voldevice $voldevice $voltype $origin_device)
@@ -666,7 +808,7 @@ process_part_of_volumes() {
                     case "$subtype" in
                         "ext4")
                             echo MSG resizing ext4 filesystem on $dev_name...
-                            quiet_resize2fs "$voldevice"
+                            do_quiet resize2fs "$voldevice"
                             ;;
                         "fat"|"efi")
                             echo MSG resizing FAT filesystem on $dev_name...
@@ -702,24 +844,12 @@ process_part_of_volumes() {
                     ;;
                 copy_partition)
                     echo "MSG copying partition $origin_voldevice -> $voldevice..."
-                    dd_min_verbose if=$origin_voldevice of=$voldevice bs=10M
-                    ;;
-                unmount)
-                    if [ "$mountpoint" != "none" ]
-                    then
-                        unmount_tree "$mountpoint"
-                    fi
+                    copy_partition "$origin_voldevice" "$voldevice" "$subtype" \
+                                   "$mountpoint" "$temp_dir"
                     ;;
                 wipe_orig_part)
                     echo "MSG wiping $origin_voldevice..."
                     wipefs -a "$origin_voldevice"
-                    ;;
-                fsck)
-                    if [ "$mountpoint" != "none" ]
-                    then
-                        echo "MSG checking filesystem on $voldevice..."
-                        enforce_disk_cmd fsck "$voldevice"
-                    fi
                     ;;
                 *)
                     echo "MSG BUG: unexpected step '$step'!"
@@ -727,6 +857,7 @@ process_part_of_volumes() {
             esac
         done
     done
+    rm -rf "$temp_dir"
 }
 
 grub_vg_rename() {
@@ -755,4 +886,16 @@ set_final_vg_name()
     else
         echo "WARNING: Could not rename LVM volume group because '$FINAL_VG_NAME' already exists!" >&2
     fi
+}
+
+grub-install()
+{
+    # grub-install prints messages to standard
+    # error stream although most of these are just
+    # informational (or minor issues). This function masks
+    # the grub-install program to discard those spurious
+    # messages.
+    # caution with shebangs: bash is needed to allow a
+    # function name containing '-' char.
+    do_quiet env grub-install "$@"
 }

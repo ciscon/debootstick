@@ -59,10 +59,13 @@ format_ext4()
     mkfs.ext4 -F -q $label_option -b 4096 -O "none,$features" -m 2 "$device"
 }
 
-get_partition_devices()
+get_loop_device_partitions()
 {
-    image_device="$1"
-    kpartx -l $image_device | awk '{ print "/dev/mapper/"$1 }'
+    loop_device="$1"
+    partx -o NR -g "$loop_device" | while read num
+    do
+        echo "${loop_device}p$num"
+    done
 }
 
 partition_image()
@@ -86,7 +89,7 @@ partition_image()
             fi
             echo $partdef
         done
-    } | sfdisk "$image_path" >/dev/null
+    } | sfdisk --no-tell-kernel "$image_path" >/dev/null
 }
 
 save_vol_uuid()
@@ -155,7 +158,7 @@ format_volumes()
     device="$(readlink $work_dir/device)"
 
     # retrieve the partition devices
-    partition_devices="$(get_partition_devices $device)"
+    partition_devices="$(get_loop_device_partitions $device)"
 
     # format partitions
     i=1
@@ -221,9 +224,10 @@ mount_volumes()
 create_formatted_image()
 {
     image_name=$1   # 'draft' or 'final'
-    target_fs="$2"
-    stick_os_id=$3
-    image_file="$4"
+    sector_size=$2
+    target_fs="$3"
+    stick_os_id=$4
+    image_file="$5"
     work_dir="$DBSTCK_TMPDIR/$image_name"
     layout_dir="$DBSTCK_TMPDIR/.layout"
     if [ -z "$image_file" ]
@@ -245,16 +249,19 @@ create_formatted_image()
     stick_size_mb=$(cat $layout_dir/needed_size_mb)
     $DD bs=$((1024*1024)) seek=$stick_size_mb count=0 of="$image_file"
 
-    # create partitions
-    partition_image "$image_file" "$layout_dir"
-
-    # let the kernel know about this device
+    # create loop device
     image_device=$(losetup -f)
-    failsafe losetup $image_device "$image_file"
-    echo "undo losetup $image_device \"$image_file\"" >> $work_dir/release_info
+    failsafe_losetup --sector-size $sector_size $image_device "$image_file"
+    echo undo losetup --sector-size $sector_size $image_device "$image_file" \
+                 >> $work_dir/release_info
+
+    # create partitions
+    partition_image "$image_device" "$layout_dir"
+
     ln -sf "$image_device" "$work_dir/device"
-    failsafe kpartx -a $image_device
-    echo "undo kpartx -a $image_device" >> $work_dir/release_info
+    # let the kernel know about partitions of this device
+    failsafe partx -a $image_device
+    echo "undo partx -a $image_device" >> $work_dir/release_info
 
     # format partitions and lvm volumes, then mount them
     format_volumes "$work_dir" "$layout_dir" "$lvm_vg"

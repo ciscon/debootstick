@@ -20,6 +20,7 @@ root_password_on_first_boot=0
 config_grub_on_serial_line=0
 system_type="live"
 layout_file="default"
+sector_size=512
 kernel_bootargs=""
 config_hostname=""
 chroot_in=""
@@ -75,6 +76,14 @@ parse_args()
             ;;
             --disk-layout)
                 layout_file="$2"
+                shift 2
+            ;;
+            --sector-size)
+                sector_size="$2"
+                shift 2
+            ;;
+            --run-on-first-boot)
+                first_boot_script="$2"
                 shift 2
             ;;
             -*)
@@ -139,6 +148,16 @@ fi
 # this directory should contain a system
 # file hierarchy (1st level of checks)
 check_fs_hierarchy "$chroot_in" 1 || exit 1
+
+# let's verify first_boot_script variable
+if [ -n "$first_boot_script" ]
+then
+    if [ ! -x "${chroot_in}/${first_boot_script}" ]
+    then
+        echo "First boot script file '$first_boot_script' not found in chroot or missing execute permission." >&2
+        exit 1
+    fi
+fi
 
 # detect target type
 target_type="$(detect_target_type "$chroot_in")"
@@ -248,6 +267,7 @@ optional_target_preliminary_steps
 echo -n "I: draft image - partitioning and formatting... "
 create_formatted_image \
         draft \
+        $sector_size \
         "$ORIG_TREE" \
         $STICK_OS_ID
 draft_rootfs_mountpoint="$DBSTCK_TMPDIR/draft/fs"
@@ -268,6 +288,9 @@ check_fs_hierarchy "$PWD" 2 || exit 1
 echo -n "I: draft image - generating fstab... "
 generate_fstab "$layout_dir"
 echo done
+
+# copy host resolv.conf to help generating a proper one in guest
+cp /etc/resolv.conf etc/resolv.conf.host
 
 mkdir -p opt/debootstick
 cp -a $DBSTCK_DIR/scripts/live opt/debootstick/live
@@ -296,6 +319,7 @@ finalize_fs $draft_rootfs_mountpoint
 echo -n "I: final image - partitioning and formatting... "
 create_formatted_image \
         final \
+        $sector_size \
         $draft_rootfs_mountpoint \
         ${STICK_OS_ID} \
         $final_image_abspath
@@ -323,6 +347,13 @@ then
     cat >> $final_rootfs_mountpoint/dbstck.conf << EOF
 FINAL_VG_NAME="$(cat "$layout_dir"/final_vg_name)"
 VG_RENAME="$(target_get_vg_rename_command)"
+EOF
+fi
+
+if [ -n "$first_boot_script" ]
+then
+    cat >> $final_rootfs_mountpoint/dbstck.conf << EOF
+FIRST_BOOT_SCRIPT="$first_boot_script"
 EOF
 fi
 
@@ -363,4 +394,3 @@ echo done
 chmod u+rw $final_image_abspath
 stick_size=$(real_size_human_readable $final_image_abspath)
 echo "I: $final_image_path ready (size: ${stick_size}). "
-

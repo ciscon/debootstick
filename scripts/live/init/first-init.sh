@@ -25,6 +25,8 @@ else    # 'live' mode
     $INIT_SCRIPTS_DIR/occupy-space.sh
 fi
 
-# restore the lvm config as it was in the
-# initial chroot environment
-restore_lvm_conf
+if [ -n "$FIRST_BOOT_SCRIPT" ]
+then
+    echo "Running custom first boot script."
+    $FIRST_BOOT_SCRIPT
+fi

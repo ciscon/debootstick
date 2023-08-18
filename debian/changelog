@@ -1,6 +1,38 @@
-debootstick (2.6) unpublished; urgency=medium
+debootstick (2.8) unstable; urgency=medium
 
+  * Bookworm support (thanks to ciscon@github)
+  * The package is now architecture-independent
+  * Support running from source dir (thanks to ciscon@github)
+  * Raspberry Pi guest: improve binfmt cpu emulation handling
+  * More robust guest resolv.conf
+  * Fix possible missing space error when updating large initramfs
+  * apt install: fix return code if ever it fails
+  * Disk layout sizes: increase margins for security
+  * Fix dependency issue (LP: #1981651)
+  * Migration: Fix issues with 'disk' or 'part' in LVM labels
+    (thanks to V.Danjean)
+
+ -- Etienne Dublé <etienne.duble@gmail.com>  Thu, 20 Oct 2022 14:32:04 +0000
+
+debootstick (2.7) focal impish jammy; urgency=medium
+
+  * New option --run-on-first-boot (thanks to S H Mohanjith)
+
+ -- Etienne Dublé <etienne.duble@gmail.com>  Mon, 24 Jan 2022 09:58:00 +0000
+
+debootstick (2.6) focal impish jammy; urgency=medium
+
+  * Secure-Boot support (idea of khimaros)
+  * Support for 4K native disks, and new --sector-size option
+    (thanks to S.Fiala)
   * Fix support for migrating to NVMe devices (thanks to F.Lavratti)
+  * Fix migrating to a disk with a different logical sector size
+  * Installer-mode: generic disk detection with lsblk
+  * Fix UEFI boot on Ubuntu minbase
+  * Improved /etc/resolv.conf handling again
+  * Minor improvements and fixes
+
+ -- Etienne Dublé <etienne.duble@gmail.com>  Wed, 19 Jan 2022 16:03:25 +0000
 
 debootstick (2.5) unstable; urgency=medium
 
