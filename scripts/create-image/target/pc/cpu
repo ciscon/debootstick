@@ -2,12 +2,11 @@
 
 get_target_cpu() {
     fs_tree="$1"
-    if ls "$fs_tree/etc/ld.so.conf.d/i"*"86-linux-gnu.conf" >/dev/null 2>&1
-    then
-        echo "i386"
-    fi
     if ls "$fs_tree/etc/ld.so.conf.d/x86_64-linux-gnu.conf" >/dev/null 2>&1
     then
         echo "amd64"
+    elif ls "$fs_tree/etc/ld.so.conf.d/i"*"86-linux-gnu.conf" >/dev/null 2>&1
+    then
+        echo "i386"
     fi
 }
