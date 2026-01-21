@@ -1,4 +1,4 @@
-debootstick (2.9) UNRELEASED; urgency=medium
+debootstick (2.9) unstable; urgency=medium
 
   * Minor update to error message style (thanks to K.Gilmer)
   * Update message about tested systems (thanks to K.Gilmer)
