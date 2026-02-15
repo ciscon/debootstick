@@ -75,17 +75,21 @@ get_grub_arch() {
 
 grub_install_uefi()
 {
+    echo "installing efi"
     arch=$(get_grub_arch)
     options="--target=${arch}-efi --uefi-secure-boot --no-nvram"
     if grub-install --help | grep -q force-extra-removable
     then
         options="$options --force-extra-removable"
     fi
+    echo "using options: $options"
     grub-install $options
 }
 
 grub_install_bios()
 {
+    echo "installing bios"
+    echo "using options $1"
     grub-install "$1"
 }
 
