@@ -77,7 +77,7 @@ grub_install_uefi()
 {
     echo "installing efi"
     arch=$(get_grub_arch)
-    options="--target=${arch}-efi --uefi-secure-boot --no-nvram --force"
+    options="--target=${arch}-efi --uefi-secure-boot --no-nvram"
     if grub-install --help | grep -q force-extra-removable
     then
         options="$options --force-extra-removable"
@@ -90,7 +90,7 @@ grub_install_bios()
 {
     echo "installing bios"
     echo "using options $1"
-    grub-install "$1" --no-nvram --force
+    grub-install "$1"
 }
 
 smart_update_initramfs()
