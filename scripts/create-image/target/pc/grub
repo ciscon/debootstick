@@ -81,7 +81,6 @@ grub_install_uefi()
     then
         options="$options --force-extra-removable"
     fi
-    options+=" --no-nvram"
     grub-install $options
 }
 
