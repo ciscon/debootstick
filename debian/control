@@ -1,10 +1,8 @@
 Source: debootstick
 Section: admin
-Priority: optional
 Maintainer: Etienne Dublé <etienne.duble@gmail.com>
 Build-Depends: debhelper-compat (= 13)
-Rules-Requires-Root: no
-Standards-Version: 4.6.1.0
+Standards-Version: 4.7.3
 Homepage: https://drakkar-lig.github.io/debootstick
 Vcs-Git: https://github.com/drakkar-lig/debootstick.git
 Vcs-Browser: https://github.com/drakkar-lig/debootstick
@@ -12,7 +10,7 @@ Vcs-Browser: https://github.com/drakkar-lig/debootstick
 Package: debootstick
 Architecture: all
 Depends: ${misc:Depends}, lvm2, uuid-runtime, gdisk,
- dosfstools, e2fsprogs, qemu-user-static
+ dosfstools, e2fsprogs, qemu-user-binfmt
 Suggests: debootstrap, qemu-kvm
 Description: Turn a chroot environment into a bootable image
  debootstick is used to generate a bootable image from a Debian
