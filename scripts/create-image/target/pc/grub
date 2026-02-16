@@ -89,8 +89,9 @@ grub_install_uefi()
 grub_install_bios()
 {
     echo "installing bios"
-    echo "using options $1"
-    grub-install "$1"
+    options="--target=i386-pc $1"
+    echo "using options $options"
+    grub-install "$options"
 }
 
 smart_update_initramfs()
